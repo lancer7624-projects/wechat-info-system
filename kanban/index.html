@@ -98,7 +98,23 @@
   .empty-card{padding:20px}
 
   .brief-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
-  @media(max-width:680px){.brief-grid{grid-template-columns:1fr}}
+  /* 手机看板（2026-10-11 加）：收紧留白 + 放大触控区，手机上单手点得动 */
+  @media(max-width:680px){
+    .brief-grid{grid-template-columns:1fr}
+    .topbar-inner{padding:12px 14px 8px}
+    .brand h1{font-size:19px}
+    .source-note{padding:0 14px 8px}
+    .date-nav{padding:0 14px 14px}
+    .content{padding:14px 14px 20px}
+    .footer{padding:0 14px 32px}
+    .card{padding:14px 14px}
+    section{margin-bottom:24px}
+    .btn{min-height:40px;padding:9px 14px}
+    .btn-sm{min-height:32px}
+    .pill{padding:8px 14px}
+    .tick{width:26px;height:26px;font-size:15px}
+    .view-banner{padding:9px 12px;font-size:13px}
+  }
   .brief-source{font-weight:600;font-size:14px;margin-bottom:8px;color:var(--accent)}
   .brief-points{list-style:none}
   .brief-points li{padding:4px 0 4px 18px;position:relative;font-size:14px}
@@ -150,6 +166,10 @@
   .act-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:16px}
   .act-card{display:flex;flex-direction:column}
   .act-head{display:flex;justify-content:space-between;align-items:flex-start;gap:8px}
+  /* tick 与标题同一行：act-head 是 space-between 三项会把标题挤到中间，
+   所以标题+tick 必须先包成一个 group，再跟星星分列两端 */
+  .act-tickrow{display:flex;align-items:flex-start;gap:8px;flex:1;min-width:0}
+  .act-tickrow .act-title{flex:1;min-width:0}
   .act-title{font-weight:600;font-size:15px}
   .act-meta{color:var(--text-muted);font-size:13px;display:flex;gap:12px;margin-top:6px;flex-wrap:wrap}
   .act-foot{
@@ -190,6 +210,27 @@
     margin-top:10px;padding:10px 12px;background:#f6f8fc;border-radius:8px;
     font-size:13px;color:var(--text);white-space:pre-wrap;word-break:break-all;
   }
+
+  /* ---------- 打勾「已处理」 ---------- */
+  .topbar-tools{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .tk-toggle{display:inline-flex;align-items:center;gap:5px;font-size:13px;color:var(--text-muted);cursor:pointer;user-select:none}
+  .tk-toggle input{cursor:pointer;accent-color:var(--accent)}
+  .tk-count{font-size:13px;color:var(--text-muted)}
+  .tk-count b{color:var(--accent)}
+  .btn-sm{padding:5px 10px;font-size:12px}
+
+  .tick{
+    flex:none;width:20px;height:20px;margin-top:3px;
+    border:2px solid var(--gray);border-radius:6px;background:#fff;
+    cursor:pointer;display:flex;align-items:center;justify-content:center;
+    color:#fff;font-size:13px;font-weight:700;line-height:1;
+    transition:.15s;user-select:none;
+  }
+  .tick:hover{border-color:var(--accent);background:var(--accent-soft)}
+  .tick.on{background:var(--green);border-color:var(--green)}
+  .is-done{opacity:.55}
+  .is-done .tl-title,.is-done .act-title{text-decoration:line-through}
+  .act-card.is-done{opacity:.55}
 
   .footer{max-width:1080px;margin:0 auto;padding:0 24px 40px;color:var(--text-muted);font-size:12px;text-align:center}
 
@@ -235,7 +276,14 @@
         <h1 id="appTitle">微信信息看板</h1>
         <div id="greeting" class="greeting"></div>
       </div>
-      <button id="styleBtn" class="btn">风格：正经</button>
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:8px">
+        <button id="styleBtn" class="btn">风格：正经</button>
+        <div class="topbar-tools">
+          <span class="tk-count" id="doneCount">已处理 0 / 0</span>
+          <label class="tk-toggle"><input type="checkbox" id="hideDone"> 只看未处理</label>
+          <button class="btn btn-sm" id="clearDone">清除本日打勾</button>
+        </div>
+      </div>
     </div>
     <div id="sourceNote" class="source-note" style="display:none"></div>
     <nav id="dateNav" class="date-nav"></nav>
@@ -391,6 +439,7 @@ function openModal(d){
   document.getElementById('detailModal').classList.add('open');
   document.body.style.overflow = 'hidden';
 }
+
 function closeModal(){
   document.getElementById('detailModal').classList.remove('open');
   document.body.style.overflow = '';
@@ -434,6 +483,93 @@ function emptyCard(msg){ return '<div class="card empty-card">' + emptyInner(msg
 function sectionBlock(title, body){ return '<div class="card"><div class="card-title">' + esc(title) + '</div>' + body + '</div>'; }
 function sectionHeader(title){ return '<h2 class="section-title">' + esc(title) + '</h2>'; }
 
+/* ================= 打勾「已处理」 =================
+   ⚠️ 为什么状态存在浏览器 localStorage 而不是 data.json：
+   data.json 每天被_merge_approved.py 覆写，任何写回都会被下次分析抹掉。
+   localStorage 按「日期 + 板块 + 内容」做键，跨天自动隔离，刷新不丢。 */
+const DONE_KEY = 'kb_done_v1';
+let doneMap = {};
+let hideDone = false;
+try { doneMap = JSON.parse(localStorage.getItem(DONE_KEY) || '{}') || {}; } catch(e){ doneMap = {}; }
+function saveDone(){
+  try { localStorage.setItem(DONE_KEY, JSON.stringify(doneMap)); } catch(e){}
+}
+
+/* 手机看板（2026-10-11 加）：服务端 done_state.json 为真源，电脑和手机共用同一份。
+   localStorage 只是「连不上服务端」时的离线兜底（双击 file:// 打开 / 服务没起）。
+   连上后以服务端为准整体覆盖 —— 这样手机打勾电脑能看见，取消打勾也能同步。 */
+const DONE_API = '/done';
+let serverDone = false;
+async function loadServerDone(){
+  try {
+    const m = await fetchJson(DONE_API);
+    if (m && typeof m === 'object'){
+      // 合并：服务端为准，但本地勾选（其他浏览器/旧版遗留）也保留，避免被整体覆盖清空
+      const merged = Object.assign({}, m);
+      const localOnly = [];
+      for (const k of Object.keys(doneMap)){
+        if (!(k in merged)) { merged[k] = doneMap[k]; localOnly.push(k); }
+      }
+      doneMap = merged;
+      serverDone = true;
+      saveDone();                       // 顺手回写本地缓存，下次离线也有
+      // 一次性把本地独有（未上云）的勾同步到服务端，换设备也不丢
+      for (const k of localOnly){
+        try { await fetch(DONE_API, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({key:k, on:true}) }); } catch(e){}
+      }
+      return true;
+    }
+  } catch(e){}
+  serverDone = false;                   // 服务没起 / file:// 打开 → 纯本地模式
+  return false;
+}
+function pushDone(key, on){
+  if (!serverDone) return;
+  try {
+    fetch(DONE_API, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key: key, on: !!on })
+    }).catch(() => { serverDone = false; });
+  } catch(e){ serverDone = false; }
+}
+/* 键：日期|板块|来源|时间|标题前80字 —— 少了任何一段都容易撞键（同群多条同名通知） */
+function itemKey(section, date, o){
+  o = o || {};
+  const head = String(o.title || o.text || '').slice(0, 80);
+  return [date, section, o.source || '', o.time || '', head].join('|');
+}
+function isDone(k){ return !!doneMap[k]; }
+function toggleDone(k){
+  if (doneMap[k]) delete doneMap[k]; else doneMap[k] = Date.now();
+  saveDone();
+  pushDone(k, !!doneMap[k]);
+  renderAll();
+}
+function tickHtml(section, date, o){
+  const k = itemKey(section, date, o);
+  return '<div class="tick' + (doneMap[k] ? ' on' : '') + '" data-donekey="' + esc(k) + '"'
+    + ' title="标记为已处理 / 再点取消">'
+    + (doneMap[k] ? '✓' : '') + '</div>';
+}
+function clearDayDone(){
+  const d = state.data; const day = state.viewDate || (d && d.today.date);
+  Object.keys(doneMap).forEach(k => { if (k.indexOf(day + '|') === 0) delete doneMap[k]; });
+  saveDone();
+  if (serverDone){
+    try {
+      fetch(DONE_API, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clear_date: day })
+      }).catch(() => {});
+    } catch(e){}
+  }
+  renderAll();
+}
+/* 已处理项是否要隐藏（只在「只看未处理」打开时藏） */
+function skipDone(section, date, o){ return hideDone && isDone(itemKey(section, date, o)); }
+
 /* ================= 数据获取 ================= */
 async function fetchJson(url){
   const r = await fetch(url, { cache: 'no-store' });
@@ -442,7 +578,7 @@ async function fetchJson(url){
 }
 async function loadData(){
   if (location.protocol === 'file:'){
-    // file:// 下浏览器无法读取同目录 JSON（CORS 限制），直接用内置示例数据，保证双击可看且无控制台报错
+    // 否则退回内置示例，保证直接双击 index.html 也有东西看、无控制台报错
     return { data: deepCopy(EMBEDDED_DEMO), source: 'embedded' };
   }
   try { return { data: await fetchJson('./data.json'), source: 'data.json' }; } catch(e){}
@@ -482,6 +618,8 @@ function renderBrief(brief, t){
                     title: p.text || '',
                     source: src.source,
                     time: p.time || '',
+                    date: state.viewDate || '',
+                    platform: p.platform || src.platform || '',
                     detail: p.detail || '',
                     quotes: p.quotes || [],
                     link: p.link || ''
@@ -528,22 +666,28 @@ function renderNotify(list, t){
     (buckets[k] = buckets[k] || []).push(n);
   }
   const keys = order.filter(k => buckets[k] && buckets[k].length);
-  return keys.map(k => {
-    const items = buckets[k];
+  const out = keys.map(k => {
+    const items = buckets[k].filter(n => !skipDone('notify', state.viewDate, n));
+    if (!items.length) return '';   /* 全被「只看未处理」过滤掉了*/
     return '<div class="notify-group">' + esc(k)
       + ' <span class="ng-count">' + items.length + '</span></div>'
       + items.map(n => {
-        const clickable = n && (n.detail || n.quotes || n.link);
+        if (skipDone('notify', state.viewDate, n)) return '';
+        const clickable = n && (n.detail || n.quotes || n.link || n.source);
+        const k = itemKey('notify', state.viewDate, n);
         const idx = clickable ? regDetail({
           title: n.text || '',
           source: n.source || '',
           time: n.time || '',
+          date: state.viewDate || '',
+          platform: n.platform || '',
           detail: n.detail || '',
           quotes: n.quotes || [],
           link: n.link || ''
         }) : -1;
-        return '<div class="tl-item' + (clickable ? ' clickable p-clickable' : '') + '"'
+        return '<div class="tl-item' + (clickable ? ' clickable p-clickable' : '') + (doneMap[k] ? ' is-done' : '') + '"'
           + (clickable ? ' data-idx="' + idx + '" onclick="openModalFrom(this)"' : '') + '>'
+          + tickHtml('notify', state.viewDate, n)
           + '<div class="tl-time">' + esc(fmtTime(n.time)) + '</div>'
           + '<div class="notify-cat">' + esc(n.category || '📢') + '</div>'
           + '<div class="tl-body"><div class="tl-title">' + esc(n.text || '') + '</div>'
@@ -554,6 +698,7 @@ function renderNotify(list, t){
           + '</div></div></div>';
       }).join('');
   }).join('');
+  return out || emptyCard('🎉 这天的通知都处理完了');
 }
 
 function renderTimeline(schedule, t){
@@ -564,20 +709,27 @@ function renderTimeline(schedule, t){
   for (const group of sorted){
     const list = Array.isArray(group.items) ? group.items : [];
     if (!list.length) continue;
+    const visList = list.filter(it => !skipDone('schedule', group.date || state.viewDate, it));
+    if (!visList.length) continue;
     html += '<div class="tl-date">' + esc(group.date) + ' <span class="tl-weekday">' + weekday(group.date) + '</span></div>';
     let itemsHtml = '';
-    for (const it of list){
-      const clickable = it && (it.detail || it.quotes || it.link);
+    for (const it of visList){
+      const clickable = it && (it.detail || it.quotes || it.link || it.source);
+      const k = itemKey('schedule', group.date || state.viewDate, it);
       const idx = clickable ? regDetail({
         title: it.title || '',
         source: it.source || '',
         time: (group.date || '') + ' ' + (it.time || ''),
+        /* 行程的 date 是「事情发生日」≠ 消息发送日，后端会自己往前回溯找消息那天的文件 */
+        date: group.date || state.viewDate || '',
+        platform: it.platform || '',
         detail: it.detail || '',
         quotes: it.quotes || [],
         link: it.link || ''
       }) : -1;
-      itemsHtml += '<div class="tl-item' + (clickable ? ' clickable p-clickable' : '') + '"'
+      itemsHtml += '<div class="tl-item' + (clickable ? ' clickable p-clickable' : '') + (doneMap[k] ? ' is-done' : '') + '"'
         + (clickable ? ' data-idx="' + idx + '" onclick="openModalFrom(this)"' : '') + '>'
+        + tickHtml('schedule', group.date || state.viewDate, it)
         + '<div class="tl-time">' + esc(fmtTime(it.time)) + '</div>'
         + '<div class="tl-dot ' + statusClass(it.status) + '"></div>'
         + '<div class="tl-body"><div class="tl-title">' + esc(it.title) + '</div>'
@@ -599,19 +751,27 @@ function renderTimeline(schedule, t){
 function renderActivities(list, t){
   const arr = Array.isArray(list) ? list : [];
   if (!arr.length) return emptyCard(t.emptyActivities);
-  return '<div class="act-grid">' + arr.map(a => {
-    const clickable = a && (a.detail || a.quotes || a.link);
+  const vis = arr.filter(a => !skipDone('act', state.viewDate, a));
+  if (!vis.length) return emptyCard('🎉 这天的新增活动都处理完了');
+  return '<div class="act-grid">' + vis.map(a => {
+    const actTitle = (a.title || a.text || '').trim();
+    const clickable = a && (a.detail || a.quotes || a.link || a.source);
+    const k = itemKey('act', state.viewDate, a);
     const idx = clickable ? regDetail({
-      title: a.title || '',
+      title: actTitle,
       source: a.source || '',
       time: a.time || '',
+      date: state.viewDate || '',
+      platform: a.platform || '',
       detail: a.detail || '',
       quotes: a.quotes || [],
       link: a.link || ''
     }) : -1;
-    return '<div class="card act-card' + (clickable ? ' clickable p-clickable' : '') + '"'
+    return '<div class="card act-card' + (clickable ? ' clickable p-clickable' : '') + (doneMap[k] ? ' is-done' : '') + '"'
     + (clickable ? ' data-idx="' + idx + '" onclick="openModalFrom(this)"' : '') + '>'
-    + '<div class="act-head"><div class="act-title">' + esc(a.title || '未命名活动') + '</div>'
+    + '<div class="act-head">'
+    + '<div class="act-tickrow">' + tickHtml('act', state.viewDate, a)
+    + '<div class="act-title">' + esc(actTitle || '未命名活动') + '</div></div>'
     + '<span class="stars">' + stars(a.importance) + '</span></div>'
     + '<div class="act-meta">'
     + (a.time ? '<span>🕐 ' + esc(fmtTime(a.time)) + '</span>' : '')
@@ -784,6 +944,30 @@ function renderAll(){
   sb.className = 'btn' + (state.style === 'plain' ? '' : ' btn-casual');
   renderDateNav();
   renderContent();
+  updateDoneCount();
+}
+
+/* 当前视图日期下，通知 / 行程 / 活动 三类一共多少条、已处理多少条 */
+function updateDoneCount(){
+  const el = document.getElementById('doneCount');
+  if (!el) return;
+  const day = state.viewDate;
+  let total = 0, done = 0;
+  const scan = (section, list, dateKey) => {
+    (Array.isArray(list) ? list : []).forEach(o => {
+      total++; if (isDone(itemKey(section, dateKey || day, o))) done++;
+    });
+  };
+  const v = currentView();
+  if (v){
+    scan('notify', v.notify, day);
+    scan('act', v.activities_new, day);
+    (Array.isArray(v.schedule) ? v.schedule : []).forEach(g =>
+      (Array.isArray(g.items) ? g.items : []).forEach(it => {
+        total++; if (isDone(itemKey('schedule', g.date || day, it))) done++;
+      }));
+  }
+  el.innerHTML = '已处理 <b>' + done + '</b> / ' + total;
 }
 
 function showSourceNote(source){
@@ -809,6 +993,7 @@ async function init(){
   const res = await loadData();
   state.data = res.data;
   state.viewDate = res.data.today.date;
+  await loadServerDone();      // 打勾状态：服务端真源（手机/电脑共用），连不上退回 localStorage
   const styleCycle = { plain: 'casual', casual: 'seagull', seagull: 'plain' };
   document.getElementById('styleBtn').addEventListener('click', () => {
     state.style = styleCycle[state.style] || 'plain';
@@ -818,6 +1003,22 @@ async function init(){
   });
   renderAll();
   showSourceNote(res.source);
+
+  /* 打勾交互：事件委托（键里可能有引号/&，写进 onclick 会被截断，data 属性才安全） */
+  document.addEventListener('click', e => {
+    const tk = e.target.closest && e.target.closest('.tick');
+    if (tk){ e.stopPropagation(); toggleDone(tk.getAttribute('data-donekey')); }
+  });
+  const hd = document.getElementById('hideDone');
+  hd.checked = hideDone;
+  hd.addEventListener('change', () => { hideDone = hd.checked; renderAll(); });
+  document.getElementById('clearDone').addEventListener('click', () => {
+    const day = state.viewDate;
+    const n = Object.keys(doneMap).filter(k => k.indexOf(day + '|') === 0).length;
+    if (!n){ alert('这天还没有打过勾。'); return; }
+    if (!confirm('清除 ' + day + ' 的 ' + n + ' 条打勾？只清这一天的，其他日期不动。')) return;
+    clearDayDone();
+  });
 }
 
 init();
