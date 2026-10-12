@@ -19,6 +19,7 @@ import re
 import subprocess
 import threading
 import wave
+import time
 
 os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
 
@@ -36,6 +37,10 @@ HOTKEY = "ctrl+alt+r"
 SR = 16000
 PORT = 8710
 MIN_SECONDS = 1.0  # 短于此的录音丢弃（防误触）
+
+# 打勾「已处理」状态：独立文件，绝不写 data.json（它每天被分析流程覆写，写回必被抹）
+DONE_STATE = os.path.join(KANBAN_DIR, "done_state.json")
+_done_lock = threading.Lock()
 
 _state = {"recording": False, "frames": [], "stream": None,
           "last": {"file": None, "transcript": None}}
@@ -259,6 +264,51 @@ def toggle():
             threading.Thread(target=_finish, args=(frames,), daemon=True).start()
 
 
+
+
+def _load_done():
+    """读取打勾状态 map（键=日期|板块|来源|时间|标题前80字）"""
+    try:
+        with open(DONE_STATE, encoding="utf-8") as f:
+            d = json.load(f)
+        return d if isinstance(d, dict) else {}
+    except Exception:
+        return {}
+
+
+def _save_done(m):
+    """原子写：临时文件 + os.replace。重试以规避杀软/同步软件瞬时锁文件；
+    全部失败再退回直接写目标，并清掉残留 .tmp。"""
+    data = json.dumps(m, ensure_ascii=False)
+    tmp = DONE_STATE + ".tmp"
+    wrote_tmp = False
+    for _ in range(5):
+        try:
+            with open(tmp, "w", encoding="utf-8") as f:
+                f.write(data)
+                f.flush()
+                os.fsync(f.fileno())
+            wrote_tmp = True
+            break
+        except Exception:
+            time.sleep(0.1)
+    for _ in range(5):
+        try:
+            if wrote_tmp:
+                os.replace(tmp, DONE_STATE)
+            else:
+                with open(DONE_STATE, "w", encoding="utf-8") as f:
+                    f.write(data)
+            break
+        except Exception:
+            time.sleep(0.15)
+    try:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+    except Exception:
+        pass
+
+
 class _Handler(http.server.SimpleHTTPRequestHandler):
     """看板静态服务（挂 kanban 目录）+ 录音控制接口
     看板页走 http://127.0.0.1:8710/ 打开 → fetch 同目录 data.json 不被浏览器拦，
@@ -295,6 +345,13 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
+        elif self.path.split("?")[0] == "/done":
+            body = json.dumps(_load_done(), ensure_ascii=False).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
         else:
             super().do_GET()
 
@@ -320,9 +377,54 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
+        elif self.path.split("?")[0] == "/done":
+            self._do_done()
         else:
             self.send_response(404)
             self.end_headers()
+
+    def _do_done(self):
+        """打勾「已处理」状态读写：POST 支持 {key,on} / {clear_date}"""
+        n = int(self.headers.get("Content-Length") or 0)
+        try:
+            req = json.loads(self.rfile.read(n).decode("utf-8"))
+        except Exception:
+            payload = b'{"ok":false,"err":"bad json"}'
+            self.send_response(400)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+            return
+        with _done_lock:
+            m = _load_done()
+            cd = req.get("clear_date")
+            if cd:
+                pre = str(cd) + "|"
+                for k in [k for k in m if k.startswith(pre)]:
+                    del m[k]
+            elif req.get("key"):
+                k = str(req["key"])
+                if req.get("on"):
+                    m[k] = int(time.time())
+                else:
+                    m.pop(k, None)
+            try:
+                _save_done(m)
+            except Exception:
+                payload = b'{"ok":false,"err":"write fail"}'
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+                return
+        body = json.dumps({"ok": True, "count": len(m)}, ensure_ascii=False).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
     def log_message(self, *a):
         pass
@@ -330,7 +432,7 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
 
 def _start_http():
     srv = http.server.ThreadingHTTPServer(("127.0.0.1", PORT), _Handler)
-    print(f"🌐 看板: http://127.0.0.1:{PORT}/ （GET /status, POST /toggle）",
+    print(f"🌐 看板: http://127.0.0.1:{PORT}/ （GET /status, POST /toggle, /done）",
           flush=True)
     srv.serve_forever()
 
