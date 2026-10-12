@@ -1154,14 +1154,12 @@ function renderNotify(list, t){
       + ' <span class="ng-count">' + items.length + '</span></div>'
       + items.map(n => {
         if (skipDone('notify', state.viewDate, n)) return '';
-        const clickable = n && (n.detail || n.quotes || n.link || n.source);
+        const clickable = n && (n.detail || n.quotes || n.link);
         const k = itemKey('notify', state.viewDate, n);
         const idx = clickable ? regDetail({
           title: n.text || '',
           source: n.source || '',
           time: n.time || '',
-          date: state.viewDate || '',
-          platform: n.platform || '',
           detail: n.detail || '',
           quotes: n.quotes || [],
           link: n.link || ''
@@ -1195,15 +1193,13 @@ function renderTimeline(schedule, t){
     html += '<div class="tl-date">' + esc(group.date) + ' <span class="tl-weekday">' + weekday(group.date) + '</span></div>';
     let itemsHtml = '';
     for (const it of visList){
-      const clickable = it && (it.detail || it.quotes || it.link || it.source);
+      const clickable = it && (it.detail || it.quotes || it.link);
       const k = itemKey('schedule', group.date || state.viewDate, it);
       const idx = clickable ? regDetail({
         title: it.title || '',
         source: it.source || '',
         time: (group.date || '') + ' ' + (it.time || ''),
         /* 行程的 date 是「事情发生日」≠ 消息发送日，后端会自己往前回溯找消息那天的文件 */
-        date: group.date || state.viewDate || '',
-        platform: it.platform || '',
         detail: it.detail || '',
         quotes: it.quotes || [],
         link: it.link || ''
@@ -1236,14 +1232,12 @@ function renderActivities(list, t){
   if (!vis.length) return emptyCard('🎉 这天的新增活动都处理完了');
   return '<div class="act-grid">' + vis.map(a => {
     const actTitle = (a.title || a.text || '').trim();
-    const clickable = a && (a.detail || a.quotes || a.link || a.source);
+    const clickable = a && (a.detail || a.quotes || a.link);
     const k = itemKey('act', state.viewDate, a);
     const idx = clickable ? regDetail({
       title: actTitle,
       source: a.source || '',
       time: a.time || '',
-      date: state.viewDate || '',
-      platform: a.platform || '',
       detail: a.detail || '',
       quotes: a.quotes || [],
       link: a.link || ''
