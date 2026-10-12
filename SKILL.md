@@ -48,7 +48,7 @@ wechat-assistant-skill/
 │   ├── wx_serve.py       ←   微信双向服务：收你的消息 → 命令行智能体作答 → 回复（可带附件）
 │   ├── notify_fail.py    ←   班次失败飞书告警（run_analysis.bat 重试仍败时调）
 │   ├── verify_entries.py ←   写看板前的核对闸门（数据核实铁律执行器）
-│   ├── recorder.py       ←   看板静态服务 + 录音热键（Ctrl+Alt+R）+ whisper 转录
+│   ├── recorder.py       ←   看板静态服务 + 录音热键（Ctrl+Alt+R）+ whisper 转录 + 打勾「已处理」落盘（/done 端点）
 │   ├── toast.ps1         ←   桌面气泡提示
 │   ├── load_env.py       ←   从 VSCode settings 读 Claude 环境变量
 │   ├── run_analysis.bat  ←   headless 班次入口（智能体无人值守跑 prompt）
